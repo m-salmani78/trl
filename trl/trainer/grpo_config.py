@@ -82,6 +82,10 @@ class GRPOConfig(_BaseConfig):
             with `generation_batch_size`.
         temperature (`float`, defaults to `1.0`):
             Temperature for sampling. The higher the temperature, the more random the completions.
+        temperature_list (`list[float]`, *optional*):
+            List of temperatures for multi-temperature sampling (GSPO-style). When provided, each prompt generates
+            `num_generations` completions, one at each temperature in the list. The length of `temperature_list` must
+            equal `num_generations`. If `None` (default), all completions use the single `temperature` value.
         top_p (`float`, *optional*, defaults to `1.0`):
             Float that controls the cumulative probability of the top tokens to consider. Must be in (0, 1]. Set to
             `1.0` to consider all tokens.
@@ -706,6 +710,72 @@ class GRPOConfig(_BaseConfig):
             "scaling by the standard deviation introduces a question-level difficulty bias."
         },
     )
+    temperature_list: list[float] | None = field(
+        default=None,
+        metadata={
+            "help": "List of temperatures for diverse group sampling in MDP-GRPO. "
+            "When provided, each forward pass samples responses using different temperatures "
+            "to increase gradient variance. Default: None (single temperature)."
+            "The length of `temperature_list` must equal to `num_generations`. "
+            "If `None` (default), all completions use the single `temperature` value."
+        },
+    )
+    dual_anchor_alpha: float = field(
+        default=0.0,
+        metadata={
+            "help": "Weight for dual-anchor advantage computation in MDP-GRPO (α ∈ [0,1]). "
+            "Blends group-relative advantages with global baseline advantages to prevent "
+            "zero-variance collapse. α=0: standard GRPO, α=1: full global anchor. Default: 0.0."
+        },
+    )
+    dual_anchor_reward_is_normalized: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to normalize rewards before computing dual-anchor advantages."
+            "Recommended when reward scales vary across constraint types. Default: False."
+        },
+    )
+    dual_anchor_constraint_key: str = field(
+        default=None,
+        metadata={
+            "help": "Key in reward dict for constraint satisfaction scores (e.g., 'constraint_score'). "
+            "Used to compute constraint-specific baselines in dual-anchor mode. Default: None."
+        },
+    )
+    dual_anchor_baseline_mode: str = field(
+        default="max_half_and_group_mean",
+        metadata={"help": "Delta baseline for dual-anchor: 'half', 'group_mean', or 'max_half_and_group_mean'."},
+    )
+    prospect_enable: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable prospect-theoretic reward shaping for MDP-GRPO. "
+            "Applies asymmetric value function to advantages, amplifying losses more than gains"
+            "to address mean-centering blindness. Default: False."
+        },
+    )
+    prospect_apply_to_advantages: bool = field(
+        default=True,
+        metadata={
+            "help": "Apply prospect shaping to raw advantages (True) or mixture of advantages (False). "
+            "True is recommended for stability. Default: True."
+        },
+    )
+    prospect_beta: float = field(
+        default=0.8,
+        metadata={
+            "help": "Curvature parameter (β) for prospect value function in MDP-GRPO:"
+            "A_pt = lambda*tanh(beta_PT*A)."
+        },
+    )
+    prospect_lambda_pos: float = field(
+        default=1.25,
+        metadata={"help": "Weight (λ+) for positive advantages in prospect shaping."},
+    )
+    prospect_lambda_neg: float = field(
+        default=2.0,
+        metadata={"help": "Weight (λ-) for negative advantages in prospect shaping. (Typically λ- > λ+ for loss aversion)"},
+    )
     loss_type: str = field(
         default="dapo",
         metadata={
@@ -950,3 +1020,12 @@ class GRPOConfig(_BaseConfig):
                 "GRPO requires at least 2 generations per prompt to calculate the advantages. You provided "
                 f"{self.num_generations}, which is less than the minimum required."
             )
+
+        if self.temperature_list is not None and len(self.temperature_list) != self.num_generations:
+            raise ValueError(
+                f"temperature_list length ({len(self.temperature_list)}) must equal num_generations "
+                f"({self.num_generations})."
+            )
+
+        if self.delta is not None:
+            raise ValueError("Liger kernel does not support two-sided GRPO loss yet.")
